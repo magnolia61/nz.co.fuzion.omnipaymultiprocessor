@@ -117,6 +117,8 @@ class MollieRefundTest extends \PHPUnit\Framework\TestCase implements HeadlessIn
     // payment & carried the right amount.
     $this->assertStringContainsString('/payments/tr_test456/refunds', $this->getRequestURLs()[0]);
     $this->assertStringContainsString('195.00', $this->getRequestBodies()[0]);
+    // Mollie requires a description on refunds - make sure one is always sent.
+    $this->assertStringContainsString('"description"', $this->getRequestBodies()[0]);
   }
 
   /**
