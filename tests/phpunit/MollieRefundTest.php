@@ -2,7 +2,6 @@
 
 use Civi\Payment\Exception\PaymentProcessorException;
 use Civi\Test\HeadlessInterface;
-use Civi\Test\HookInterface;
 use Civi\Test\TransactionalInterface;
 use GuzzleHttp\Psr7\Response;
 
@@ -15,7 +14,7 @@ use GuzzleHttp\Psr7\Response;
  *
  * @group headless
  */
-class MollieRefundTest extends \PHPUnit\Framework\TestCase implements HeadlessInterface, HookInterface, TransactionalInterface {
+class MollieRefundTest extends \PHPUnit\Framework\TestCase implements HeadlessInterface, TransactionalInterface {
   use \Civi\Test\Api3TestTrait;
   use HttpClientTestTrait;
 
