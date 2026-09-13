@@ -272,6 +272,100 @@ class CRM_Core_Payment_OmnipayMultiProcessor extends CRM_Core_Payment_PaymentExt
   }
 
   /**
+   * Does this processor support refunds?
+   *
+   * Generic for any Omnipay gateway that exposes a refund() method
+   * (the tested target is Mollie). The gateway class is resolved without
+   * instantiating it, so this is safe to call in listing contexts.
+   *
+   * @return bool
+   */
+  public function supportsRefund() {
+    try {
+      $this->ensurePaymentProcessorTypeIsSet();
+      $shortName = str_replace('omnipay_', '', $this->_paymentProcessor['payment_processor_type']);
+      $gatewayClass = \Omnipay\Common\Helper::getGatewayClassName($shortName);
+      return class_exists($gatewayClass) && method_exists($gatewayClass, 'refund');
+    }
+    catch (\Exception $e) {
+      return FALSE;
+    }
+  }
+
+  /**
+   * Submit a refund to the payment processor.
+   *
+   * Generic for any Omnipay gateway that exposes a refund() method; the
+   * tested target is Mollie. On failure an exception is thrown (rather than
+   * returning a failure array) so that CiviCRM never records a refund that
+   * the gateway rejected.
+   *
+   * @param array $params
+   *   Expected keys: trxn_id (the gateway's original transaction reference),
+   *   amount, and optionally currency (resolved from the original financial
+   *   transaction when omitted).
+   *
+   * @return array
+   *   refund_trxn_id, refund_status ('Completed'), fee_amount, trxn_date.
+   *
+   * @throws \Civi\Payment\Exception\PaymentProcessorException
+   */
+  public function doRefund(&$params) {
+    if (empty($params['trxn_id']) || empty($params['amount'])) {
+      throw new \Civi\Payment\Exception\PaymentProcessorException('doRefund requires trxn_id and amount');
+    }
+    $currency = $params['currency'] ?? NULL;
+    if (empty($currency)) {
+      // Look up the currency of the original transaction so the refund is
+      // issued in the same currency; fall back to the default currency.
+      $originalTrxn = \Civi\Api4\FinancialTrxn::get(FALSE)
+        ->addSelect('currency')
+        ->addWhere('trxn_id', '=', $params['trxn_id'])
+        ->execute()
+        ->first();
+      $currency = $originalTrxn['currency'] ?? $this->getCurrency($params);
+    }
+    $this->ensurePaymentProcessorTypeIsSet();
+    $this->createGatewayObject();
+    $this->setProcessorFields();
+
+    $refundOptions = [
+      'action' => 'Refund',
+      'transactionReference' => $params['trxn_id'],
+      'amount' => \Civi::format()->machineMoney($params['amount'], $currency),
+      'currency' => $currency,
+      // Mollie requires a description; it may be shown to the customer
+      // (e.g. on their bank statement) depending on the payment method.
+      'description' => $params['description'] ?? ts('Refund of payment %1', [1 => $params['trxn_id']]),
+    ];
+    CRM_Utils_Hook::alterPaymentProcessorParams($this, $params, $refundOptions);
+    unset($refundOptions['action']);
+
+    try {
+      $response = $this->gateway->refund($refundOptions)->send();
+    }
+    catch (\Exception $e) {
+      throw new \Civi\Payment\Exception\PaymentProcessorException('Refund failed: ' . $e->getMessage());
+    }
+    if (!$response->isSuccessful()) {
+      throw new \Civi\Payment\Exception\PaymentProcessorException('Refund failed: ' . $response->getMessage());
+    }
+    return [
+      // Prefer the refund's own reference. Per the Omnipay contract only
+      // getTransactionReference() is guaranteed; getTransactionId() defaults
+      // to null and echoes a merchant-supplied id, which we never send on a
+      // refund - so for standard gateways this falls through to the contract
+      // method. Mollie is the exception: it overrides getTransactionId() to
+      // expose the new refund id (re_...) and keeps the original payment id
+      // (tr_...) in getTransactionReference().
+      'refund_trxn_id' => $response->getTransactionId() ?: $response->getTransactionReference(),
+      'refund_status' => 'Completed',
+      'fee_amount' => 0,
+      'trxn_date' => date('YmdHis'),
+    ];
+  }
+
+  /**
    * Initialize class variables.
    *
    * @param array $params
